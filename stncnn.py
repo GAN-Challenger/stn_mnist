@@ -7,34 +7,33 @@ import layers
 import time
 import cv2
 
-BATCH_SIZE = 16
+BATCH_SIZE = 256
 CLASS_SIZE = 10
 
 #set gpu
 import os
 os.environ["CUDA_VISIBLE_DEVICES"] = "0"
 
-def optimize(loss,global_step,sample_numbers,batch_size):
+def optimize(loss,global_step,sample_numbers,batch_size,var_list):
 
     num_batches_per_epoch = sample_numbers / batch_size
     
     decay_steps = num_batches_per_epoch*10
     
-    lr = tf.train.exponential_decay(0.001,\
+    lr = tf.train.exponential_decay(0.005,\
     global_step,decay_steps,0,staircase=True)
     
-    tf.summary.scalar('learning_rate', lr)
+    #tf.summary.scalar('learning_rate', lr)
     
     #opt = tf.train.MomentumOptimizer(lr,0.9).minimize(loss)
     
-    opt = tf.train.GradientDescentOptimizer(lr).minimize(loss)
+    opt = tf.train.GradientDescentOptimizer(lr).minimize(loss,var_list=var_list)
     
     return opt
 
 def __train__():
     #data
-    dataset = mnist_rotation.DataSet("train-images.idx3-ubyte","train-labels.idx1-ubyte" \
-                     ,"t10k-images.idx3-ubyte","t10k-labels.idx1-ubyte")
+    dataset = mnist_rotation.DataSet("mnist/train-images.idx3-ubyte","mnist/train-labels.idx1-ubyte","mnist/t10k-images.idx3-ubyte","mnist/t10k-labels.idx1-ubyte")
     X = tf.placeholder(tf.uint8, [None,42,42,1])
     Y = tf.placeholder(tf.uint8,[None,1])
 
@@ -48,18 +47,36 @@ def __train__():
     #stn
     images_ = transformer.batch_transformer(images,stn,[42,42])
 
+    """
+    R = tf.placeholder(tf.uint8,[None,42,42,1])
+    RL = tf.placeholder(tf.uint8,[None,1])
+
+    R_ = (tf.cast(R,tf.float32) - 128.0)/128.0
+    RL_ = tf.cast(RL,tf.int32)
+
+    IMAGE = tf.concat([images_,R_],0)
+    LABEL = tf.concat([labels,RL_],0)
+    """
     #cnn
-    cnn,cnn_params = network.net("cnn",images_,CLASS_SIZE)
-    loss,cross_loss = layers.crossentropy("loss",cnn,labels,BATCH_SIZE,CLASS_SIZE)
+    cnn,cnn_params = network.net("cnn",images_,CLASS_SIZE,trainable = True)
+    loss,cross_loss = layers.crossentropy("stn_loss",cnn,labels,BATCH_SIZE,CLASS_SIZE)
     global_step = tf.Variable(0, trainable=False)
-    opt = optimize(loss,global_step,30000,BATCH_SIZE)
-    #cnn_
-    cnn_,_ = network.net("cnn",images,CLASS_SIZE,True)
-    loss_,cross_loss_ = layers.crossentropy("loss1",cnn_,labels,BATCH_SIZE,CLASS_SIZE)
+    opt = optimize(loss,global_step,60000,BATCH_SIZE,stn_params + cnn_params)
+    #cnn
+    """_
+    cnn_,cnn_params_ = network.net("cnn",images,CLASS_SIZE,trainable = True,reuse = True)
+    loss_,cross_loss_ = layers.crossentropy("cnn_loss",cnn_,labels,BATCH_SIZE,CLASS_SIZE)
     global_step_ = tf.Variable(0, trainable=False)
-    opt_ = optimize(loss_,global_step_,30000,BATCH_SIZE)
-	#softmax = layers.softmax("cnn_softmax",cnn)
-	
+    opt_ = optimize(loss_,global_step_,30000,BATCH_SIZE,cnn_params_)
+    #softmax = layers.softmax("cnn_softmax",cnn)
+    """
+    """
+    CNN, CNN_PARAMS = network.net("cnn",IMAGE,CLASS_SIZE,trainable = True,reuse = True:)
+    LOSS,CROSS_LOSS = layers.crossentropy("LOSS",CNN,LABEL,BATCH_SIZE*2,CLASS_SIZE)
+    GLOBAL_STEP    = tf.Variable(0, trainable=False)
+    OPT             = optimize(LOSS,GLOBAL_STEP,60000,BATCH_SIZE*2)
+    """
+
     sess = tf.Session()
     init = tf.global_variables_initializer()
 
@@ -69,25 +86,27 @@ def __train__():
 
     save_file_name = "./transformer_model"
 	
-    for step in range(50):
+    for step in range(100):
         #print "step = ",step
         value = 0
         global_step = step
 
         start_time = time.time()
-        for epoch in range(int(30000/BATCH_SIZE)):
+        for epoch in range(int(60000/BATCH_SIZE)):
             #print epoch
             #_cnn,_y = sess.run([cnn,Y],feed_dict = {(X,Y):dataset.getTrainBatch(BATCH_SIZE)})
             #print _cnn,_y
-            _opt,_loss_value = sess.run([opt , cross_loss],feed_dict = {(X,Y):dataset.getTrainBatch(BATCH_SIZE)})
-            value += _loss_value
-            #print "current loss : ",_loss_value
-            
-            _opt_,_loss_value_ = sess.run([opt_, cross_loss_],feed_dict = {(X,Y):dataset.getTrainBatch(BATCH_SIZE,"TEST")})
+            opt_,loss_ = sess.run([opt , cross_loss],feed_dict = {(X,Y):dataset.getTrainBatch(BATCH_SIZE)})
             #value += _loss_value
-            print "current loss : ",_loss_value,"  ",_loss_value_
+            print "current loss : ",loss_
+            
+            #_opt_,_loss_value_ = sess.run([opt_, cross_loss_],feed_dict = {(X,Y):dataset.getTrainBatch(BATCH_SIZE,"TEST")})
+            #value += _loss_value
+            #print "current loss : ",_loss_value,"  ",_loss_value_
+            #_opt,_loss_value = sess.run([OPT , CROSS_LOSS],feed_dict = {(X,Y,R,RL):(dataset.getTrainBatch(BATCH_SIZE),dataset.getTrainBatch(BATCH_SIZE))})
+            #value += _loss_value
 
-            #print _loss_value
+            #print _loss_value_
 
         print ("step = ",step)
         print ("loss = ",value/(60000/BATCH_SIZE))
@@ -104,8 +123,7 @@ def __train__():
 #__train__()
 
 def __test__():
-    dataset = mnist_rotation.DataSet("train-images.idx3-ubyte","train-labels.idx1-ubyte" \
-                     ,"t10k-images.idx3-ubyte","t10k-labels.idx1-ubyte")
+    dataset = mnist_rotation.DataSet("mnist/train-images.idx3-ubyte","mnist/train-labels.idx1-ubyte","mnist/t10k-images.idx3-ubyte","mnist/t10k-labels.idx1-ubyte")
     X = tf.placeholder(tf.uint8, [None,42,42,1])
     Y = tf.placeholder(tf.uint8,[None,1])
 
@@ -130,5 +148,6 @@ def __test__():
             cv2.imwrite(str(j) + "_src.jpg",images[j])
             cv2.imwrite(str(j) + "_dst.jpg",image_[j])
 
-#__test__()
+#with tf.device("cpu/"):
+    #__test__()
 __train__()
